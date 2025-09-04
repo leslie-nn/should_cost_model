@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from datetime import date
 
-st.set_page_config(page_title="Should Cost Calculation v12 (Plant Ops + Logistics Categories)", layout="wide")
+st.set_page_config(page_title="Should Cost Calculation v12 (Table Totals)", layout="wide")
 
 # ===== Helpers =====
 def dollars(x):
@@ -45,12 +45,10 @@ RAW_COLS = [
 if "raw_df" not in st.session_state:
     st.session_state.raw_df = pd.DataFrame(columns=RAW_COLS)
 
-# Plant Operation (replaces “Manufacturing includes Utilities”)
 MFG_COLS = ["Category","Item","Value ($/lb)","Source Tag","Source/Notes","Attachment","Low $/lb","Base $/lb","High $/lb"]
 if "mfg_df" not in st.session_state:
     st.session_state.mfg_df = pd.DataFrame(columns=MFG_COLS)
 
-# Logistics now includes Category (aligned with Raw & Plant Operation)
 LOG_COLS = ["Category","Item","Value ($/lb)","Source Tag","Source/Notes","Attachment","Low $/lb","Base $/lb","High $/lb"]
 if "log_df" not in st.session_state:
     st.session_state.log_df = pd.DataFrame(columns=LOG_COLS)
@@ -216,11 +214,6 @@ with st.expander("4.0 Margin & Totals", expanded=True):
     ms_base = raw_base + mfg_base
     ms_high = raw_high + mfg_high
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Manufacturing Subtotal (Low)",  f"{dollars(ms_low)} / lb")
-    c2.metric("Manufacturing Subtotal (Base)", f"{dollars(ms_base)} / lb")
-    c3.metric("Manufacturing Subtotal (High)", f"{dollars(ms_high)} / lb")
-
     def with_margin(x, margin_pct):
         m = margin_pct / 100.0
         return (x / (1 - m)) if (1 - m) > 0 else np.nan
@@ -228,11 +221,6 @@ with st.expander("4.0 Margin & Totals", expanded=True):
     wm_low  = with_margin(ms_low,  st.session_state.margin_pct)
     wm_base = with_margin(ms_base, st.session_state.margin_pct)
     wm_high = with_margin(ms_high, st.session_state.margin_pct)
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Subtotal with Margin (Low)",  f"{dollars(wm_low)} / lb")
-    c2.metric("Subtotal with Margin (Base)", f"{dollars(wm_base)} / lb")
-    c3.metric("Subtotal with Margin (High)", f"{dollars(wm_high)} / lb")
 
     log_low = log_base = log_high = 0.0
     for _, r in st.session_state.log_df.iterrows():
@@ -242,17 +230,25 @@ with st.expander("4.0 Margin & Totals", expanded=True):
         log_low  += b if np.isnan(l) else l
         log_high += b if np.isnan(h) else h
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Logistics Subtotal (Low)",  f"{dollars(log_low)} / lb")
-    c2.metric("Logistics Subtotal (Base)", f"{dollars(log_base)} / lb")
-    c3.metric("Logistics Subtotal (High)", f"{dollars(log_high)} / lb")
-
     tec_low  = (0 if np.isnan(wm_low)  else float(wm_low))  + log_low
     tec_base = (0 if np.isnan(wm_base) else float(wm_base)) + log_base
     tec_high = (0 if np.isnan(wm_high) else float(wm_high)) + log_high
 
-    st.header("TOTAL ESTIMATED COST")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Low",  f"{dollars(tec_low)} / lb")
-    c2.metric("Base", f"{dollars(tec_base)} / lb")
-    c3.metric("High", f"{dollars(tec_high)} / lb")
+    # ===== Summary Table =====
+    summary_df = pd.DataFrame(
+        {
+            "Manufacturing Subtotal": [ms_low, ms_base, ms_high],
+            "Subtotal with Margin":  [wm_low, wm_base, wm_high],
+            "Logistics Subtotal":    [log_low, log_base, log_high],
+            "TOTAL ESTIMATED COST":  [tec_low, tec_base, tec_high],
+        },
+        index=["Low","Base","High"]
+    ).T
+
+    summary_df = summary_df.applymap(lambda x: 0 if x is None or np.isnan(x) else float(x))
+
+    st.subheader("Cost Summary")
+    st.dataframe(
+        summary_df.style.format("${:,.4f}"),
+        use_container_width=True
+    )
