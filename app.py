@@ -20,13 +20,6 @@ def to_float(v):
     except Exception:
         return np.nan
 
-def suggested_per_lb(price_per_unit, cf_value):
-    p = to_float(price_per_unit)
-    c = to_float(cf_value)
-    if np.isnan(p) or np.isnan(c):
-        return np.nan
-    return p * c
-
 # ===== Session Init =====
 if "meta" not in st.session_state:
     st.session_state.meta = {"product": "", "analysis_date": str(date.today())}
@@ -39,16 +32,18 @@ if "scenario_pct" not in st.session_state:
 
 RAW_COLS = [
     "Category","Item","Price ($/unit)","CF Unit","CF Value (unit/lb)",
-    "Suggested $/lb","Override $/lb","Source Tag","Source/Notes","Attachment",
+    "Source Tag","Source/Notes","Attachment",
     "Low $/lb","Base $/lb","High $/lb"
 ]
 if "raw_df" not in st.session_state:
     st.session_state.raw_df = pd.DataFrame(columns=RAW_COLS)
 
+# Plant Operation (formerly Manufacturing incl. Utilities)
 MFG_COLS = ["Category","Item","Value ($/lb)","Source Tag","Source/Notes","Attachment","Low $/lb","Base $/lb","High $/lb"]
 if "mfg_df" not in st.session_state:
     st.session_state.mfg_df = pd.DataFrame(columns=MFG_COLS)
 
+# Logistics (now includes Category)
 LOG_COLS = ["Category","Item","Value ($/lb)","Source Tag","Source/Notes","Attachment","Low $/lb","Base $/lb","High $/lb"]
 if "log_df" not in st.session_state:
     st.session_state.log_df = pd.DataFrame(columns=LOG_COLS)
@@ -156,24 +151,22 @@ with st.expander("3.0 Logistics", expanded=True):
 with st.expander("4.0 Margin & Totals", expanded=True):
     st.session_state.margin_pct = st.number_input("Gross Margin (%)", min_value=0.0, max_value=99.9, value=st.session_state.margin_pct, step=0.1, format="%.1f")
     st.session_state.scenario_pct = st.slider("Scenario ±%", 0, 100, int(st.session_state.scenario_pct), step=1)
-    if st.button("Apply Scenarios"):
-        def apply_scenarios(df, val_col="Value ($/lb)"):
-            for i in df.index:
-                base = to_float(df.at[i,"Base $/lb"]) if "Base $/lb" in df.columns else np.nan
-                if np.isnan(base):
-                    if val_col in df.columns:
-                        base = to_float(df.at[i,val_col])
-                    else:
-                        base = 0.0
-                if not np.isnan(base):
-                    df.at[i,"Low $/lb"]  = base * (1 - st.session_state.scenario_pct/100)
-                    df.at[i,"High $/lb"] = base * (1 + st.session_state.scenario_pct/100)
-            return df
-        st.session_state.raw_df = apply_scenarios(st.session_state.raw_df,"Price ($/unit)")
-        st.session_state.mfg_df = apply_scenarios(st.session_state.mfg_df)
-        st.session_state.log_df = apply_scenarios(st.session_state.log_df)
 
-    # Compute totals
+    # Apply scenarios to Base $/lb only
+    if st.button("Apply Scenarios"):
+        def apply_scenarios_base(df):
+            for i in df.index:
+                base = to_float(df.at[i, "Base $/lb"]) if "Base $/lb" in df.columns else np.nan
+                if not np.isnan(base):
+                    df.at[i, "Low $/lb"]  = base * (1 - st.session_state.scenario_pct/100)
+                    df.at[i, "High $/lb"] = base * (1 + st.session_state.scenario_pct/100)
+            return df
+
+        st.session_state.raw_df = apply_scenarios_base(st.session_state.raw_df)
+        st.session_state.mfg_df = apply_scenarios_base(st.session_state.mfg_df)
+        st.session_state.log_df = apply_scenarios_base(st.session_state.log_df)
+
+    # ---- Compute totals
     def row_base_raw(row):
         b = to_float(row.get("Base $/lb"))
         return b if not np.isnan(b) else 0.0
@@ -185,6 +178,7 @@ with st.expander("4.0 Margin & Totals", expanded=True):
         if not np.isnan(v): return v
         return 0.0
 
+    # Raw totals
     raw_low = raw_base = raw_high = 0.0
     for _, r in st.session_state.raw_df.iterrows():
         b = row_base_raw(r)
@@ -193,6 +187,7 @@ with st.expander("4.0 Margin & Totals", expanded=True):
         raw_low  += b if np.isnan(l) else l
         raw_high += b if np.isnan(h) else h
 
+    # Plant Operation totals
     mfg_low = mfg_base = mfg_high = 0.0
     for _, r in st.session_state.mfg_df.iterrows():
         b = row_base_direct(r)
@@ -201,6 +196,7 @@ with st.expander("4.0 Margin & Totals", expanded=True):
         mfg_low  += b if np.isnan(l) else l
         mfg_high += b if np.isnan(h) else h
 
+    # Manufacturing Subtotal = Raw + Plant Operation
     ms_low  = raw_low  + mfg_low
     ms_base = raw_base + mfg_base
     ms_high = raw_high + mfg_high
@@ -209,10 +205,12 @@ with st.expander("4.0 Margin & Totals", expanded=True):
         m = margin_pct / 100.0
         return (x / (1 - m)) if (1 - m) > 0 else np.nan
 
+    # Apply margin to manufacturing subtotal only
     wm_low  = with_margin(ms_low,  st.session_state.margin_pct)
     wm_base = with_margin(ms_base, st.session_state.margin_pct)
     wm_high = with_margin(ms_high, st.session_state.margin_pct)
 
+    # Logistics totals
     log_low = log_base = log_high = 0.0
     for _, r in st.session_state.log_df.iterrows():
         b = row_base_direct(r)
@@ -221,6 +219,7 @@ with st.expander("4.0 Margin & Totals", expanded=True):
         log_low  += b if np.isnan(l) else l
         log_high += b if np.isnan(h) else h
 
+    # Final totals (logistics added after margin)
     tec_low  = (0 if np.isnan(wm_low)  else float(wm_low))  + log_low
     tec_base = (0 if np.isnan(wm_base) else float(wm_base)) + log_base
     tec_high = (0 if np.isnan(wm_high) else float(wm_high)) + log_high
