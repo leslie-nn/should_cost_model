@@ -86,19 +86,14 @@ with st.expander("1.0 Raw Materials", expanded=True):
         attach = st.file_uploader("Attachment (optional)", type=["pdf","png","jpg"], key="raw_attach")
         submitted = st.form_submit_button("Add row")
         if submitted:
-            sug = suggested_per_lb(raw_price, raw_cf_val)
             new_row = {
                 "Category": raw_category, "Item": raw_item,
                 "Price ($/unit)": raw_price, "CF Unit": raw_cf_unit, "CF Value (unit/lb)": raw_cf_val,
-                "Suggested $/lb": None if np.isnan(sug) else float(sug),
-                "Override $/lb": None,
                 "Source Tag": raw_source_tag, "Source/Notes": raw_source_notes, "Attachment": attach.name if attach else "",
                 "Low $/lb": None, "Base $/lb": None, "High $/lb": None
             }
             st.session_state.raw_df = pd.concat([st.session_state.raw_df, pd.DataFrame([new_row])], ignore_index=True)
     raw_edit = st.data_editor(st.session_state.raw_df, num_rows="dynamic", key="raw_editor", use_container_width=True)
-    if not raw_edit.empty:
-        raw_edit["Suggested $/lb"] = raw_edit.apply(lambda r: suggested_per_lb(r.get("Price ($/unit)"), r.get("CF Value (unit/lb)")), axis=1)
     st.session_state.raw_df = raw_edit
 
 # ===== 2.0 Plant Operation =====
@@ -181,12 +176,8 @@ with st.expander("4.0 Margin & Totals", expanded=True):
     # Compute totals
     def row_base_raw(row):
         b = to_float(row.get("Base $/lb"))
-        if not np.isnan(b): return b
-        o = to_float(row.get("Override $/lb"))
-        if not np.isnan(o): return o
-        s = to_float(row.get("Suggested $/lb"))
-        if not np.isnan(s): return s
-        return 0.0
+        return b if not np.isnan(b) else 0.0
+
     def row_base_direct(r):
         b = to_float(r.get("Base $/lb"))
         v = to_float(r.get("Value ($/lb)"))
